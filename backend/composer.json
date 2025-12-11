@@ -1,0 +1,16 @@
+{
+    "name": "milk_project/backend",
+    "description": "Pure PHP API backend",
+    "autoload": {
+        "psr-4": {
+            "Controllers\\": "src/Controllers/",
+            "Models\\": "src/Models/",
+            "Helpers\\": "src/Helpers/",
+            "Routes\\": "src/Routes/",
+            "Database\\": "src/Database/"
+        }
+    },
+    "require": {
+        "firebase/php-jwt": "^6.11"
+    }
+}
