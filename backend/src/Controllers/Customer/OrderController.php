@@ -29,12 +29,27 @@ class OrderController
     // 2. Xử lý đặt hàng: Tạo đơn, trừ tồn kho và điều hướng thanh toán (COD/VNPAY)
     public function checkout($data)
     {
-        $this->authenticate();
+        $this->authenticate(); // Lấy user_id
 
-        if (empty($data['delivery_address']) || empty($data['payment_method']) || empty($data['full_name']) || empty($data['phone'])) {
+        // LẤY THÔNG TIN NGƯỜI DÙNG TỪ DATABASE QUA currentUser()
+        $auth = new AuthController();
+        $user = $auth->currentUser();
+
+        $full_name = $user['full_name'];
+        $phone     = $user['phone'];
+        $address   = $user['address'];
+
+        // FRONTEND CHỈ GỬI payment_method
+        if (empty($data['payment_method'])) {
+            Response::json(['error' => 'Thiếu phương thức thanh toán'], 400);
+        }
+
+        // Kiểm tra thông tin người nhận
+        if (!$full_name || !$phone || !$address) {
             Response::json(['error' => 'Vui lòng cung cấp đầy đủ số điện thoại, địa chỉ'], 400);
         }
 
+        // Lấy giỏ hàng
         $cart = Cart::getCartByUserId($this->user_id);
         if (!$cart) Response::json(['error' => 'Giỏ hàng trống'], 400);
 
@@ -56,16 +71,16 @@ class OrderController
             // Tạo đơn hàng
             $order_id = Order::create([
                 'user_id'        => $this->user_id,
-                'full_name'      => $data['full_name'],
-                'phone'          => $data['phone'],
-                'address'        => $data['delivery_address'],
+                'full_name'      => $full_name,
+                'phone'          => $phone,
+                'address'        => $address,
                 'shipping_fee'   => $shipping_fee,
                 'total_amount'   => $total_amount,
                 'payment_method' => $data['payment_method'],
                 'note'           => $data['note'] ?? ''
             ]);
 
-            // Tạo chi tiết đơn và trừ kho
+            // Chi tiết đơn + trừ kho
             foreach ($items_to_buy as $item) {
                 Order::addDetail([
                     'order_id'     => $order_id,
@@ -79,6 +94,7 @@ class OrderController
                     throw new \Exception("Sản phẩm {$item['product_name']} không đủ số lượng.");
                 }
 
+                // Nếu COD thì xóa khỏi giỏ
                 if ($data['payment_method'] !== 'VNPAY') {
                     Cart::removeItem($cart['cart_id'], $item['product_id']);
                 }
@@ -87,6 +103,7 @@ class OrderController
             // Xử lý thanh toán
             if ($data['payment_method'] === 'VNPAY') {
                 $db->commit();
+
                 $paymentCtrl = new PaymentController();
                 $vnp_Url = $paymentCtrl->createPaymentUrl([
                     'order_id'   => $order_id,
@@ -94,17 +111,28 @@ class OrderController
                     'order_desc' => "Thanh toan don hang #$order_id"
                 ]);
 
-                Response::json(['message' => 'Chuyển hướng đến VNPay', 'order_id' => $order_id, 'payment_url' => $vnp_Url]);
-            } else {
-                Order::addPaymentLog($order_id, 'COD', $total_amount, 'PENDING');
-                $db->commit();
-                Response::json(['message' => 'Đặt hàng thành công', 'order_id' => $order_id]);
+                Response::json([
+                    'message'     => 'Chuyển hướng đến VNPay',
+                    'order_id'    => $order_id,
+                    'payment_url' => $vnp_Url
+                ]);
             }
+
+            // COD
+            Order::addPaymentLog($order_id, 'COD', $total_amount, 'PENDING');
+            $db->commit();
+
+            Response::json([
+                'message' => 'Đặt hàng thành công',
+                'order_id' => $order_id
+            ]);
         } catch (\Exception $e) {
             $db->rollBack();
             Response::json(['error' => 'Lỗi đặt hàng: ' . $e->getMessage()], 500);
         }
     }
+
+
 
     // 3. Xử lý thanh toán lại: Cập nhật trạng thái đơn Pending/Cancelled và tạo link thanh toán mới
     public function retryPayment($data)
